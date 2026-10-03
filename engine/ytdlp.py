@@ -386,6 +386,21 @@ def _extract(url_or_query: str, *, flat: bool = True) -> dict:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url_or_query, download=False)
     except YtdlpError as exc:
+        # If YouTube bot check or datacenter block, attempt fallback clients
+        err_msg = str(exc)
+        if "Sign in to confirm" in err_msg or "LOGIN_REQUIRED" in err_msg:
+            for fallback_clients in (["tv"], ["ios"], ["mweb"], ["web_embedded"]):
+                try:
+                    fallback_opts = dict(opts)
+                    fallback_args = dict(fallback_opts.get("extractor_args") or {})
+                    fallback_args["youtube"] = {"player_client": fallback_clients}
+                    fallback_opts["extractor_args"] = fallback_args
+                    with YoutubeDL(fallback_opts) as ydl:
+                        info = ydl.extract_info(url_or_query, download=False)
+                        if info:
+                            return info
+                except Exception:
+                    continue
         raise ProviderError(f"Could not read that page: {exc}") from exc
     if not info:
         raise ProviderError("That page had no readable media on it.")

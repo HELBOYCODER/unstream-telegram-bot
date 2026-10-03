@@ -155,12 +155,18 @@ def search_source(
         retries=3,
         socket_timeout=15,
     )
-    with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f"{prefix}:{track.query}", download=False)
-    entries = [e for e in (info.get("entries") or []) if e]
-    usable = [e for e in entries if e.get("url") not in exclude] or entries
-    chosen = _pick_candidate(usable, track.duration_ms / 1000)
-    return chosen["url"]
+    try:
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"{prefix}:{track.query}", download=False)
+        entries = [e for e in (info.get("entries") or []) if e]
+        usable = [e for e in entries if e.get("url") not in exclude] or entries
+        chosen = _pick_candidate(usable, track.duration_ms / 1000)
+        return chosen["url"]
+    except Exception as exc:
+        if prefix.startswith("yt") and not prefix.startswith("sc"):
+            # YouTube search failed (bot check or datacenter block) — fall back to SoundCloud immediately
+            return search_source(track, exclude=exclude, prefix="scsearch5")
+        raise
 
 
 def _run_ffmpeg(args: list[str], produced: Path, what: str) -> None:
@@ -281,6 +287,25 @@ def download_audio(
             ydl.download([url])
     except DownloadCancelled as exc:
         raise Cancelled() from exc
+    except Exception as exc:
+        if _BOT_CHECK_RE.search(str(exc)) and ("youtube.com" in url or "youtu.be" in url):
+            succeeded = False
+            for fallback_clients in (["tv"], ["ios"], ["mweb"], ["web_embedded"]):
+                try:
+                    fallback_opts = dict(opts)
+                    fallback_args = dict(fallback_opts.get("extractor_args") or {})
+                    fallback_args["youtube"] = {"player_client": fallback_clients}
+                    fallback_opts["extractor_args"] = fallback_args
+                    with YoutubeDL(fallback_opts) as ydl:
+                        ydl.download([url])
+                    succeeded = True
+                    break
+                except Exception:
+                    continue
+            if not succeeded:
+                raise
+        else:
+            raise
     # A postprocessor runs after the last progress hook fires, so the encode
     # of a file nobody wants any more can only be caught here.
     _stop_if_cancelled(should_cancel)
@@ -514,7 +539,8 @@ def download_track(
             on_progress("searching", 0.0)
             if attempt == 0 and track.source_url:
                 url = track.source_url
-            elif attempt == attempts - 1:
+            elif attempt == attempts - 1 or bot_checked:
+                # If YouTube gave bot check or this is the final attempt, search SoundCloud
                 url = search_source(track, exclude=failed_urls, prefix="scsearch5")
             else:
                 url = search_source(track, exclude=failed_urls, prefix="ytsearch8")

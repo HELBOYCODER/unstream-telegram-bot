@@ -46,12 +46,45 @@ jobs:
           python3 -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
+      - name: 🛡️ Launch BgUtils PO-Token Provider (YouTube anti-bot)
+        run: |
+          echo "Starting BgUtils POT Provider Docker container..."
+          docker run --name bgutil-provider -d --init --restart=always \
+            -p 127.0.0.1:4416:4416 \
+            brainicism/bgutil-ytdlp-pot-provider:latest || true
+          
+          for i in $(seq 1 15); do
+            if curl -s http://127.0.0.1:4416/ping 2>/dev/null || curl -s http://127.0.0.1:4416 2>/dev/null; then
+              echo "POT Provider is ready!"
+              break
+            fi
+            sleep 1
+          done
+          echo "POT_PROVIDER_URL=http://127.0.0.1:4416" >> $GITHUB_ENV
+          echo "YTDLP_PLAYER_CLIENTS=mweb,web,ios,tv" >> $GITHUB_ENV
+
+      - name: 🍪 Export YouTube Cookies (if provided)
+        env:
+          COOKIE_SECRET: ${{ secrets.YTDLP_COOKIES || secrets.YTDLP_COOKIEFILE }}
+        run: |
+          if [ -n "$COOKIE_SECRET" ]; then
+            echo "YouTube cookie secret detected, exporting..."
+            echo "$COOKIE_SECRET" > /tmp/youtube_cookies.txt
+            chmod 600 /tmp/youtube_cookies.txt
+            echo "YTDLP_COOKIEFILE=/tmp/youtube_cookies.txt" >> $GITHUB_ENV
+          else
+            echo "No custom YouTube cookie secret provided (using BgUtils POT provider)."
+          fi
+
       - name: 🚀 Start Unstream Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID || '8874504954' }}
           ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}
           DEFAULT_QUALITY: ${{ secrets.DEFAULT_QUALITY || '320' }}
+          POT_PROVIDER_URL: ${{ env.POT_PROVIDER_URL }}
+          YTDLP_PLAYER_CLIENTS: ${{ env.YTDLP_PLAYER_CLIENTS }}
+          YTDLP_COOKIEFILE: ${{ env.YTDLP_COOKIEFILE }}
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
             echo "::error:: TELEGRAM_BOT_TOKEN secret is not set! Please add it in repo Settings -> Secrets and variables -> Actions."
