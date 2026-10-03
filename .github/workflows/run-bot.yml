@@ -21,7 +21,7 @@ permissions:
 
 concurrency:
   group: unstream-live-bot
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   run-bot:

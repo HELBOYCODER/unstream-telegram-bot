@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -528,7 +529,11 @@ def main():
                 offset = max(offset, upd["update_id"] + 1)
 
                 if "callback_query" in upd:
-                    handle_callback_query(upd["callback_query"])
+                    threading.Thread(
+                        target=handle_callback_query,
+                        args=(upd["callback_query"],),
+                        daemon=True,
+                    ).start()
                     continue
 
                 msg = upd.get("message")
@@ -572,7 +577,12 @@ def main():
                         r"https?://[^\s<>\"']+/[^\s<>\"']*", text
                     )
                     if url_match and _looks_like_url(url_match.group(0)):
-                        handle_url(chat_id, url_match.group(0), reply_to_id=msg_id)
+                        target_url = url_match.group(0)
+                        threading.Thread(
+                            target=handle_url,
+                            args=(chat_id, target_url, msg_id),
+                            daemon=True,
+                        ).start()
                     else:
                         # If we're waiting for a song name after an Instagram
                         # login-wall, treat this text as that search.
@@ -587,7 +597,11 @@ def main():
                         query = text
                         if text.startswith("/search "):
                             query = text[8:].strip()
-                        handle_search(chat_id, query, reply_to_id=msg_id)
+                        threading.Thread(
+                            target=handle_search,
+                            args=(chat_id, query, msg_id),
+                            daemon=True,
+                        ).start()
 
         except httpx.ReadTimeout:
             continue
