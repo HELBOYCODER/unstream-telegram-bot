@@ -1,6 +1,7 @@
 """Unified resolver and multi-catalog search for Unstream Telegram Bot.
 
 Resolves Spotify, Deezer, Apple Music, YouTube and SoundCloud URLs without API keys.
+Any other link falls through to yt-dlp's generic extractor, which knows 1000+ sites.
 """
 
 import os
@@ -12,10 +13,12 @@ from . import deezer, embed, instagram, itunes, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 SEARCH_TIMEOUT_SECONDS = 15
+# Generic yt-dlp extraction can be slow on unknown pages; don't hang the bot.
+GENERIC_TIMEOUT_SECONDS = int(os.getenv("UNSTREAM_GENERIC_TIMEOUT", "90"))
 
 
 def is_supported_url(url: str) -> bool:
-    """Check if the URL belongs to any supported music provider."""
+    """Check if the URL belongs to any provider we can resolve."""
     url = url.strip()
     return bool(
         deezer.is_deezer_url(url)
@@ -46,9 +49,36 @@ def resolve_any(url: str) -> Collection:
     spotify_ref = embed.parse_url(url)
     if spotify_ref:
         return embed.resolve(*spotify_ref)
+    # Last resort: yt-dlp's generic extractor knows 1000+ sites (Bandcamp,
+    # Bilibili, SoundCloud sets, direct media URLs, ...). Run it in a worker
+    # thread so a slow page can't hang the bot forever.
+    return _resolve_generic(url)
+
+
+def _resolve_generic(url: str) -> Collection:
+    """Fallback resolver: hand any URL to yt-dlp's generic extractor."""
+    pool = ThreadPoolExecutor(max_workers=1)
+
+    def _work() -> Collection | None:
+        try:
+            return ytdlp.resolve(url)
+        except ProviderError:
+            return None
+        except Exception:
+            return None
+
+    future = pool.submit(_work)
+    done, _ = wait([future], timeout=GENERIC_TIMEOUT_SECONDS)
+    pool.shutdown(wait=False, cancel_futures=True)
+
+    if future in done:
+        col = future.result()
+        if col and col.tracks:
+            return col
+
     raise ProviderError(
-        "Unsupported link — please send a Spotify, Deezer, Apple Music, "
-        "YouTube, SoundCloud or Instagram URL."
+        "این لینک پشتیبانی نمی‌شود — لطفاً یک لینک از Spotify، Deezer، Apple Music، "
+        "YouTube، SoundCloud یا Instagram بفرستید."
     )
 
 

@@ -191,6 +191,26 @@ _SEARCH_HINT_RE = re.compile(
 )
 
 
+def _looks_like_url(text: str) -> bool:
+    """Guard the URL-detection path so plain search text isn't mistaken for a link.
+
+    Requires a real hostname in a public TLD plus a path segment. That keeps
+    "adele hello" in the search path while still catching a bare
+    "youtube.com/watch?v=abc" pasted without a scheme.
+    """
+    try:
+        host = urlparse(text).netloc.lower()
+    except Exception:
+        return False
+    if not host or " " in host:
+        return False
+    # A bare domain without a path is ambiguous — treat as search.
+    path = urlparse(text).path.strip("/")
+    if not path:
+        return False
+    return "." in host and host.split(".")[-1].isalpha()
+
+
 def _search_fallback_for_url(url: str, error: ProviderError) -> str | None:
     """When direct metadata fetch fails (Instagram login wall), the caller may
     have included a caption next to the link in the same message. We scan the
@@ -543,23 +563,31 @@ def main():
                 elif text.startswith("/quality"):
                     parts = text.split()
                     handle_quality(chat_id, parts[1:])
-                elif text.startswith("http://") or text.startswith("https://"):
-                    handle_url(chat_id, text, reply_to_id=msg_id)
                 else:
-                    # If we're waiting for a song name after an Instagram
-                    # login-wall, treat this text as that search.
-                    if chat_id in INSTAGRAM_PENDING:
-                        shortcode = INSTAGRAM_PENDING.pop(chat_id)
-                        send_message(
-                            chat_id,
-                            f"🎯 <i>جستجو برای آهنگ پست اینستاگرام <code>{shortcode}</code>...</i>",
-                            reply_to_message_id=msg_id,
-                        )
-                    # Plain text or /search query
-                    query = text
-                    if text.startswith("/search "):
-                        query = text[8:].strip()
-                    handle_search(chat_id, query, reply_to_id=msg_id)
+                    # Pull a bare URL out of the middle of a message (people
+                    # paste "check this https://..." with text around it).
+                    # Requires a real hostname + path, so ordinary search text
+                    # like "adele hello" is never mistaken for a link.
+                    url_match = re.search(
+                        r"https?://[^\s<>\"']+/[^\s<>\"']*", text
+                    )
+                    if url_match and _looks_like_url(url_match.group(0)):
+                        handle_url(chat_id, url_match.group(0), reply_to_id=msg_id)
+                    else:
+                        # If we're waiting for a song name after an Instagram
+                        # login-wall, treat this text as that search.
+                        if chat_id in INSTAGRAM_PENDING:
+                            shortcode = INSTAGRAM_PENDING.pop(chat_id)
+                            send_message(
+                                chat_id,
+                                f"🎯 <i>جستجو برای آهنگ پست اینستاگرام <code>{shortcode}</code>...</i>",
+                                reply_to_message_id=msg_id,
+                            )
+                        # Plain text or /search query
+                        query = text
+                        if text.startswith("/search "):
+                            query = text[8:].strip()
+                        handle_search(chat_id, query, reply_to_id=msg_id)
 
         except httpx.ReadTimeout:
             continue
