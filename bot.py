@@ -243,7 +243,8 @@ def handle_start(chat_id: int):
         "/status - وضعیت سرور و زمان فعالیت رانر\n"
         "/help - راهنمای استفاده"
     )
-    send_message(chat_id, text)
+    # Remove any old persistent keyboards/buttons from previous bots on this token
+    send_message(chat_id, text, reply_markup={"remove_keyboard": True})
 
 
 def handle_status(chat_id: int):
@@ -473,6 +474,38 @@ def handle_callback_query(cq: dict):
 
 # --- Notification on Bot Start ---
 
+def reset_telegram_bot_state():
+    """Wipe any stale webhook, drop stuck updates, and reset commands/menu.
+    Crucial when a bot token was previously used on another project/bot.
+    """
+    if not BOT_TOKEN:
+        return
+    logger.info("Purging any active webhook and dropping pending updates...")
+    try:
+        res = tg_request("deleteWebhook", data={"drop_pending_updates": True}, timeout=15.0)
+        logger.info(f"deleteWebhook: {res}")
+    except Exception as e:
+        logger.warning(f"Could not delete webhook: {e}")
+
+    try:
+        # Reset chat menu button to default
+        tg_request("setChatMenuButton", data={"menu_button": {"type": "default"}}, timeout=10.0)
+    except Exception:
+        pass
+
+    try:
+        commands = [
+            {"command": "start", "description": "شروع و راهنمای ربات"},
+            {"command": "search", "description": "جستجوی آهنگ در تمام پلتفرم‌ها"},
+            {"command": "quality", "description": "تنظیم کیفیت دانلود (320, 192, 128)"},
+            {"command": "status", "description": "وضعیت آنلاین بودن سرور"},
+            {"command": "help", "description": "راهنمای استفاده و سرویس‌ها"},
+        ]
+        tg_request("setMyCommands", data={"commands": commands}, timeout=10.0)
+    except Exception:
+        pass
+
+
 def notify_admin_live():
     if not BOT_TOKEN or not ADMIN_CHAT_ID:
         return
@@ -485,7 +518,7 @@ def notify_admin_live():
         "💡 <i>کافیست یک لینک از Spotify، Apple Music، Deezer، YouTube یا SoundCloud بفرستید یا اسم آهنگ را سرچ کنید!</i>"
     )
     try:
-        send_message(ADMIN_CHAT_ID, text)
+        send_message(ADMIN_CHAT_ID, text, reply_markup={"remove_keyboard": True})
         logger.info(f"Startup notification sent to admin {ADMIN_CHAT_ID}")
     except Exception as e:
         logger.warning(f"Failed to notify admin on start: {e}")
@@ -499,6 +532,7 @@ def main():
         sys.exit(1)
 
     logger.info("Starting Unstream Telegram Bot...")
+    reset_telegram_bot_state()
     notify_admin_live()
 
     offset = 0
