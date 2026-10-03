@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import time
@@ -46,6 +47,7 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # User state storage (in-memory)
 USER_QUALITY = {}
 SEARCH_CACHE = {}  # query_hash -> list[SearchResult]
+INSTAGRAM_PENDING = {}  # chat_id -> instagram shortcode awaiting a song name
 START_TIME = time.time()
 
 
@@ -184,6 +186,23 @@ def download_thumbnail(url: str, dest_dir: Path) -> Path | None:
 
 # --- Core Action Handlers ---
 
+_SEARCH_HINT_RE = re.compile(
+    r"(?:https?://\S+|\n+#\S+|\n+@\S+)",  # drop urls, hashtags, mentions
+)
+
+
+def _search_fallback_for_url(url: str, error: ProviderError) -> str | None:
+    """When direct metadata fetch fails (Instagram login wall), the caller may
+    have included a caption next to the link in the same message. We scan the
+    raw error and surrounding context for a searchable phrase.
+
+    Returns a search query string, or None when nothing usable was found.
+    """
+    # Right now we only have the URL itself — no user-supplied caption — so we
+    # cannot search meaningfully. The bot asks the user instead.
+    return None
+
+
 def handle_start(chat_id: int):
     text = (
         "🔥 <b>به ربات موزیک Unstream خوش آمدید!</b>\n\n"
@@ -194,7 +213,8 @@ def handle_start(chat_id: int):
         "• <b>Apple Music:</b> آهنگ، آلبوم، پلی‌لیست\n"
         "• <b>Deezer:</b> آهنگ، آلبوم، پلی‌لیست\n"
         "• <b>YouTube & YT Music:</b> ویدیو یا پلی‌لیست\n"
-        "• <b>SoundCloud:</b> آهنگ یا سِت\n\n"
+        "• <b>SoundCloud:</b> آهنگ یا سِت\n"
+        "• <b>Instagram:</b> لینک ریلز یا پست — آهنگش رو پیدا و دانلود می‌کنه 🆕\n\n"
         "🔍 <b>جستجوی هوشمند:</b>\n"
         "کافیست نام آهنگ یا خواننده را بفرستید تا در تمام پلتفرم‌ها همزمان جستجو کند.\n\n"
         "⚙️ <b>دستورات کاربردی:</b>\n"
@@ -320,7 +340,19 @@ def handle_url(chat_id: int, url: str, reply_to_id: int = None):
     try:
         col: Collection = resolver.resolve_any(url)
     except ProviderError as pe:
-        edit_message(chat_id, msg_id, f"❌ {str(pe)}")
+        err_text = str(pe)
+        # Instagram login wall → remember the chat and ask for a song name.
+        # The user's next plain-text message is then treated as a search.
+        if "اینستاگرام" in err_text:
+            shortcode = resolver.instagram.parse_url(url) or ""
+            INSTAGRAM_PENDING[chat_id] = shortcode
+            edit_message(
+                chat_id,
+                msg_id,
+                "ℹ️ " + err_text + "\n\n💡 <i>الان اسم آهنگ و خواننده را همین‌جا بنویس (مثلاً: <code>Adele Hello</code>) تا برایت پیدا و دانلود کنم.</i>",
+            )
+            return
+        edit_message(chat_id, msg_id, f"❌ {err_text}")
         return
     except Exception as e:
         logger.exception("Resolver error")
@@ -502,6 +534,7 @@ def main():
                     continue
 
                 if text.startswith("/start"):
+                    INSTAGRAM_PENDING.pop(chat_id, None)
                     handle_start(chat_id)
                 elif text.startswith("/help"):
                     handle_start(chat_id)
@@ -513,6 +546,15 @@ def main():
                 elif text.startswith("http://") or text.startswith("https://"):
                     handle_url(chat_id, text, reply_to_id=msg_id)
                 else:
+                    # If we're waiting for a song name after an Instagram
+                    # login-wall, treat this text as that search.
+                    if chat_id in INSTAGRAM_PENDING:
+                        shortcode = INSTAGRAM_PENDING.pop(chat_id)
+                        send_message(
+                            chat_id,
+                            f"🎯 <i>جستجو برای آهنگ پست اینستاگرام <code>{shortcode}</code>...</i>",
+                            reply_to_message_id=msg_id,
+                        )
                     # Plain text or /search query
                     query = text
                     if text.startswith("/search "):

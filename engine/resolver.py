@@ -8,7 +8,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, wait
 from difflib import SequenceMatcher
 
-from . import deezer, embed, itunes, soundcloud, ytdlp
+from . import deezer, embed, instagram, itunes, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 SEARCH_TIMEOUT_SECONDS = 15
@@ -20,6 +20,7 @@ def is_supported_url(url: str) -> bool:
     return bool(
         deezer.is_deezer_url(url)
         or itunes.is_itunes_url(url)
+        or instagram.is_instagram_url(url)
         or soundcloud.is_soundcloud_url(url)
         or ytdlp.is_supported_url(url)
         or embed.parse_url(url)
@@ -33,6 +34,8 @@ def resolve_any(url: str) -> Collection:
         return deezer.resolve(url)
     if itunes.is_itunes_url(url):
         return itunes.resolve(url)
+    if instagram.is_instagram_url(url):
+        return instagram.resolve(url)
     if soundcloud.is_soundcloud_url(url):
         try:
             return soundcloud.resolve(url)
@@ -44,7 +47,8 @@ def resolve_any(url: str) -> Collection:
     if spotify_ref:
         return embed.resolve(*spotify_ref)
     raise ProviderError(
-        "Unsupported link — please send a Spotify, Deezer, Apple Music, YouTube or SoundCloud URL."
+        "Unsupported link — please send a Spotify, Deezer, Apple Music, "
+        "YouTube, SoundCloud or Instagram URL."
     )
 
 
