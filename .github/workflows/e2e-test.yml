@@ -60,5 +60,6 @@ jobs:
           YTDLP_PLAYER_CLIENTS: ${{ env.YTDLP_PLAYER_CLIENTS }}
           YTDLP_COOKIEFILE: ${{ env.YTDLP_COOKIEFILE }}
         run: |
+          python3 -u platform_probe.py || true
           python3 -u client_probe.py || true
           python3 -u e2e_test.py "${{ inputs.url }}"
