@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import httpx
 from yt_dlp import YoutubeDL
 from yt_dlp.cookies import extract_cookies_from_browser
 from yt_dlp.utils import DownloadError as YtdlpError
@@ -468,8 +469,56 @@ def _track_from_entry(entry: dict, album: str = "", position: int = 0) -> Track:
     )
 
 
+def _resolve_youtube_oembed(url: str) -> Track | None:
+    """Fetch video metadata via YouTube's public oembed endpoint.
+    Zero auth, zero bot checks — works from datacenter IPs.
+    """
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+            resp = client.get(oembed_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_title = data.get("title") or "Unknown"
+                author = data.get("author_name") or "Unknown"
+                thumb = data.get("thumbnail_url")
+                clean_t = _clean_title(raw_title)
+                artist, title = _clean_uploader(author), clean_t
+                if " - " in clean_t:
+                    parts = clean_t.split(" - ", 1)
+                    if parts[0].strip() and parts[1].strip():
+                        artist, title = parts[0].strip(), parts[1].strip()
+                return Track(
+                    id=url,
+                    title=title,
+                    artists=[artist] if artist else ["Unknown"],
+                    album="",
+                    duration_ms=0,
+                    cover_url=thumb,
+                    track_number=1,
+                    source_url="",  # leave empty so downloader searches SoundCloud instead of failing on YouTube
+                )
+    except Exception:
+        pass
+    return None
+
+
 def resolve(url: str) -> Collection:
-    info = _extract(url)
+    try:
+        info = _extract(url)
+    except ProviderError as pe:
+        # If YouTube blocks metadata extraction, fall back to YouTube oEmbed API
+        if is_youtube_url(url):
+            fallback_track = _resolve_youtube_oembed(url)
+            if fallback_track:
+                return Collection(
+                    kind="track",
+                    name=fallback_track.title,
+                    owner=", ".join(fallback_track.artists),
+                    cover_url=fallback_track.cover_url,
+                    tracks=[fallback_track],
+                )
+        raise
 
     if info.get("_type") == "playlist" or "entries" in info:
         entries = [e for e in (info.get("entries") or []) if e]

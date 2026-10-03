@@ -28,7 +28,11 @@ print("[2/4] download_track()")
 tmp = Path(tempfile.mkdtemp())
 try:
     audio = downloader.download_track(
-        track=track, out_dir=tmp, quality="320", embed_lyrics=True
+        track=track,
+        out_dir=tmp,
+        on_progress=lambda stage, frac: print(f"      prog: {stage} ({frac:.1f})"),
+        quality="320",
+        embed_lyrics=True,
     )
     if not audio or not audio.exists():
         print("FAIL: no audio file produced")

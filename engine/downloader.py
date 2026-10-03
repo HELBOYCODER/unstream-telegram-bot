@@ -482,7 +482,7 @@ def _find_lyrics(track: Track) -> lyrics.Lyrics | None:
 def download_track(
     track: Track,
     out_dir: Path,
-    on_progress: Callable[[str, float], None],
+    on_progress: Callable[[str, float], None] = lambda stage, frac: None,
     attempts: int = 4,
     filename: str | None = None,
     quality: str = DEFAULT_QUALITY,
