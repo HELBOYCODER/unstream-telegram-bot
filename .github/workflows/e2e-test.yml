@@ -1,0 +1,30 @@
+name: 🧪 E2E Pipeline Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "🔗 Link to test (YouTube, Spotify, etc.)"
+        type: string
+        default: "https://www.youtube.com/watch?v=xFYQQPAOz7Y"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install --no-cache-dir -r requirements.txt
+      - env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: python3 -u e2e_test.py "${{ inputs.url }}"
