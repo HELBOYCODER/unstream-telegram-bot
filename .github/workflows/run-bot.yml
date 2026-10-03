@@ -1,0 +1,129 @@
+name: 🎵 Unstream Music Bot (Live 24/7 Runner)
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_hours:
+        description: "⏱️ Run duration in hours (max 5 for safe retrigger)"
+        type: string
+        default: "5"
+      auto_retrigger:
+        description: "🔄 Automatically chain the next run before timeout (24/7)"
+        type: boolean
+        default: true
+  schedule:
+    # Run every 5 hours to guarantee perpetual 24/7 uptime
+    - cron: '0 */5 * * *'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: unstream-live-bot
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    name: ⚡ Unstream Bot 24/7 Runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: 📦 Install ffmpeg and Python dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: 🚀 Start Unstream Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID || '8874504954' }}
+          ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}
+          DEFAULT_QUALITY: ${{ secrets.DEFAULT_QUALITY || '320' }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "::error:: TELEGRAM_BOT_TOKEN secret is not set! Please add it in repo Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          echo "Starting bot process..."
+          python3 -u bot.py > /tmp/bot.log 2>&1 &
+          BOT_PID=$!
+          echo "BOT_PID=$BOT_PID" >> $GITHUB_ENV
+
+          sleep 5
+          if ! kill -0 $BOT_PID 2>/dev/null; then
+            echo "::error:: Bot failed to start! Logs:"
+            cat /tmp/bot.log
+            exit 1
+          fi
+          echo "Bot successfully launched with PID $BOT_PID"
+
+      - name: 📋 Publish Summary
+        run: |
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          ## 🎵 Unstream Music Bot is RUNNING LIVE!
+
+          | Item | Value |
+          |---|---|
+          | 🤖 Telegram Bot | Active & Polling |
+          | ⚡ Network Bandwidth | 10Gbps Unmetered (GitHub Datacenter) |
+          | 🎧 Audio Quality | 320kbps MP3 (Full ID3v2 Tags + Artwork + Lyrics) |
+          | 🔒 Access Control | Restricted to Admin (${{ secrets.ADMIN_CHAT_ID || '8874504954' }}) |
+          | ⏱️ Active Duration | ${{ inputs.duration_hours || '5' }} Hours per cycle |
+          | 🔄 Uptime Loop | 24/7 Continuous Auto-Retrigger |
+          EOF
+
+      - name: 🩺 Health Monitor Loop
+        env:
+          DURATION: ${{ inputs.duration_hours }}
+        run: |
+          HOURS="${DURATION:-5}"
+          # Run for (HOURS * 3600) minus 10 minutes to allow clean handoff
+          TOTAL_SECS=$(( HOURS * 3600 - 600 ))
+          if [ $TOTAL_SECS -lt 600 ]; then
+            TOTAL_SECS=3600
+          fi
+          echo "Running watchdog for $TOTAL_SECS seconds..."
+
+          START=$(date +%s)
+          while [ $(( $(date +%s) - START )) -lt $TOTAL_SECS ]; do
+            if ! kill -0 $BOT_PID 2>/dev/null; then
+              echo "⚠️ Bot process died! Checking logs..."
+              tail -n 40 /tmp/bot.log
+              echo "Restarting bot..."
+              python3 -u bot.py >> /tmp/bot.log 2>&1 &
+              BOT_PID=$!
+              echo "Restarted bot with PID $BOT_PID"
+            fi
+            sleep 30
+          done
+          echo "Handoff window reached. Preparing next cycle..."
+
+      - name: 🔄 Auto-Retrigger Next Cycle (24/7 Continuous)
+        if: ${{ github.event_name == 'schedule' || inputs.auto_retrigger != false }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Dispatching next runner to maintain perpetual 24/7 uptime..."
+          gh workflow run run-bot.yml --repo "${{ github.repository }}" || true
+          sleep 10
+
+      - name: 🛑 Graceful Shutdown of Current Runner
+        run: |
+          echo "Stopping previous bot process gracefully..."
+          kill -TERM $BOT_PID 2>/dev/null || true
+          sleep 5
+          echo "Cycle finished cleanly."

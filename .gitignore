@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+env/
+venv/
+downloads/
+*.mp3
+*.part
+cover_thumb*
+.DS_Store
